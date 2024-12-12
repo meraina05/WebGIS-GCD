@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive GIS - GCD Calculator</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-image/leaflet-image.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <!-- Leaflet.Curve Plugin -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.curve/1.3.0/leaflet.curve.min.js"></script>
+    <!-- File JavaScript Anda -->
+    <script src="script.js" defer></script>
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.104/Build/Cesium/Cesium.js"></script>
+    <link href="https://cesium.com/downloads/cesiumjs/releases/1.104/Build/Cesium/Widgets/widgets.css" rel="stylesheet" />
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        #sidebar {
+            height: 100vh; /* Menyesuaikan tinggi sidebar ke viewport */
+            overflow-y: auto; /* Menambahkan scrolling vertikal */
+            width: 25%;
+            background-color: #2c3e50;
+            color: white;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            box-shadow: 2px 0 5px rgba(0, 0, 0, 0.5);
+        }
+
+        input, button {
+            padding: 10px;
+            font-size: 16px;
+            width: 100%;
+            border: none;
+            border-radius: 5px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #2980b9;
+            color: white;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #3498db;
+        }
+        #results-toggle {
+            text-align: left;
+            font-size: 16px;
+            background-color: #34495e;
+        }
+        .results-panel {
+            display: none;
+            padding: 10px;
+            background-color: #34495e;
+            border-radius: 5px;
+            overflow-y: auto;
+        }
+        .results-panel p {
+            margin: 5px 0;
+        }
+        #map, #cesiumContainer {
+            flex: 1;
+        }
+        .leaflet-control-attribution {
+            background: white;
+            padding: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="sidebar">
+        <label for="search">Search Location:</label>
+        <input type="text" id="search" placeholder="Enter a location" />
+        <button id="search-btn">Search</button>
+        <label for="lat1">Latitude Point 1:</label>
+        <input type="number" id="lat1" placeholder="Enter Latitude 1" />
+        <label for="lon1">Longitude Point 1:</label>
+        <input type="number" id="lon1" placeholder="Enter Longitude 1" />
+        <label for="lat2">Latitude Point 2:</label>
+        <input type="number" id="lat2" placeholder="Enter Latitude 2" />
+        <label for="lon2">Longitude Point 2:</label>
+        <input type="number" id="lon2" placeholder="Enter Longitude 2" />
+        <button id="calculate">Calculate</button>
+        <button id="clear">Clear</button>
+        <button id="switch-to-3d">Switch to 3D Globe</button>
+        <button id="results-toggle">Show/Hide Results</button>
+        <button id="export">Export to CSV</button>
+        <button id="saveMap" style="width: 100%; background-color: #2980b9; color: white; border: none; padding: 10px; font-size: 14px; border-radius: 5px; cursor: pointer; margin-bottom: 10px; box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);">
+            Save Map
+        </button>
+        <div class="results-panel" id="results-panel"></div>
+    </div>
+    <div id="map"></div>
+    <div id="cesiumContainer" style="display: none;"></div>
+    <div id="screenshotContainer" style="position: absolute; top: 25%; right: 10px; width: 200px; background-color: #2c3e50; border-radius: 8px; padding: 10px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3); z-index: 1000;">
+        <p style="font-family: Arial, sans-serif; color: #f39c12; font-size: 14px; margin: 0; text-align: center;">Hasil Tangkapan Layar:</p>
+        <div style="border: 1px dashed #555; height: 100px; display: flex; justify-content: center; align-items: center; border-radius: 5px; margin-top: 10px; background-color: #34495e;" id="screenshotResult">
+            <p style="color: #aaa; font-style: italic; font-size: 12px; text-align: center;">Belum ada tangkapan layar.</p>
+        </div>
+    </div>
+</div>
+    
+    
+
+    <script>
+        // Initialize the map
+        const map = L.map('map').setView([0, 0], 2);
+        const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+        const esri = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 17 });
+        const baseMaps = { "OpenStreetMap": osm, "ESRI Satellite": esri };
+        L.control.layers(baseMaps).addTo(map);
+        map.attributionControl.setPrefix('5016220179_Rahmi Marini Machmud');
+    
+        // Variables
+        let point1 = null, point2 = null, line = null;
+    
+        // Search Location
+        document.getElementById('search-btn').addEventListener('click', async () => {
+            const query = document.getElementById('search').value;
+    
+            try {
+                const response = await fetch(`https://nominatim.openstreetmap.org/search?q=${query}&format=json`);
+                const data = await response.json();
+    
+                if (data.length > 0) {
+                    const { lat, lon, display_name } = data[0];
+                    map.setView([lat, lon], 10);
+    
+                    addPoint(lat, lon, display_name);
+                } else {
+                    alert('Location not found. Please refine your search.');
+                }
+            } catch (error) {
+                console.error('Error fetching location:', error);
+                alert('Failed to fetch location.');
+            }
+        });
+    
+        // Add Point to Map and Inputs
+        function addPoint(lat, lon, display_name = '') {
+            if (!document.getElementById('lat1').value || !document.getElementById('lon1').value) {
+                document.getElementById('lat1').value = lat;
+                document.getElementById('lon1').value = lon;
+    
+                if (!point1) {
+                    point1 = L.marker([lat, lon]).addTo(map)
+                        .bindPopup(`<b>Point 1</b><br>${display_name}`).openPopup();
+                } else {
+                    point1.setLatLng([lat, lon]);
+                    point1.setPopupContent(`<b>Point 1</b><br>${display_name}`).openPopup();
+                }
+            } else {
+                document.getElementById('lat2').value = lat;
+                document.getElementById('lon2').value = lon;
+    
+                if (!point2) {
+                    point2 = L.marker([lat, lon]).addTo(map)
+                        .bindPopup(`<b>Point 2</b><br>${display_name}`).openPopup();
+                } else {
+                    point2.setLatLng([lat, lon]);
+                    point2.setPopupContent(`<b>Point 2</b><br>${display_name}`).openPopup();
+                }
+    
+                // Draw Great Circle Line
+                drawGreatCircle();
+            }
+        }
+    
+        // Handle Map Click Event
+        map.on('click', function(e) {
+            const { lat, lng } = e.latlng;
+            addPoint(lat, lng, `Clicked at [${lat.toFixed(6)}, ${lng.toFixed(6)}]`);
+        });
+    
+        // Draw Great Circle Line
+        function drawGreatCircle() {
+            const lat1 = parseFloat(document.getElementById('lat1').value);
+            const lon1 = parseFloat(document.getElementById('lon1').value);
+            const lat2 = parseFloat(document.getElementById('lat2').value);
+            const lon2 = parseFloat(document.getElementById('lon2').value);
+    
+            if (line) {
+                map.removeLayer(line);
+            }
+    
+            // Create intermediate points along the great circle
+            const points = calculateGreatCirclePoints(lat1, lon1, lat2, lon2);
+    
+            // Draw the curve
+            line = L.polyline(points, { color: 'blue', weight: 3 }).addTo(map);
+            map.fitBounds(L.latLngBounds(points));
+        }
+    
+        // Calculate Great Circle Points
+        function calculateGreatCirclePoints(lat1, lon1, lat2, lon2) {
+            const steps = 100; // Number of intermediate points
+            const points = [];
+    
+            const toRad = deg => (deg * Math.PI) / 180;
+            const toDeg = rad => (rad * 180) / Math.PI;
+    
+            const d = 2 * Math.asin(
+                Math.sqrt(
+                    Math.pow(Math.sin((toRad(lat2 - lat1)) / 2), 2) +
+                    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+                    Math.pow(Math.sin((toRad(lon2 - lon1)) / 2), 2)
+                )
+            );
+    
+            for (let i = 0; i <= steps; i++) {
+                const f = i / steps;
+                const A = Math.sin((1 - f) * d) / Math.sin(d);
+                const B = Math.sin(f * d) / Math.sin(d);
+                const x = A * Math.cos(toRad(lat1)) * Math.cos(toRad(lon1)) +
+                          B * Math.cos(toRad(lat2)) * Math.cos(toRad(lon2));
+                const y = A * Math.cos(toRad(lat1)) * Math.sin(toRad(lon1)) +
+                          B * Math.cos(toRad(lat2)) * Math.sin(toRad(lon2));
+                const z = A * Math.sin(toRad(lat1)) + B * Math.sin(toRad(lat2));
+    
+                const newLat = toDeg(Math.atan2(z, Math.sqrt(x * x + y * y)));
+                const newLon = toDeg(Math.atan2(y, x));
+    
+                points.push([newLat, newLon]);
+            }
+    
+            return points;
+        }
+    
+        // Calculate GCD
+document.getElementById('calculate').addEventListener('click', () => {
+    const lat1 = parseFloat(document.getElementById('lat1').value);
+    const lon1 = parseFloat(document.getElementById('lon1').value);
+    const lat2 = parseFloat(document.getElementById('lat2').value);
+    const lon2 = parseFloat(document.getElementById('lon2').value);
+
+    if (isNaN(lat1) || isNaN(lon1) || isNaN(lat2) || isNaN(lon2)) {
+        alert("Please fill all valid coordinates!");
+        return;
+    }
+
+    // Fungsi untuk konversi derajat ke radian
+    function toRad(deg) {
+        return deg * Math.PI / 180;
+    }
+
+    // Fungsi untuk konversi radian ke derajat
+    function toDeg(rad) {
+        return rad * 180 / Math.PI;
+    }
+
+    // Fungsi untuk menghitung jarak dan arah (bearing)
+    function calculateDistanceAndBearings(lat1, lon1, lat2, lon2) {
+        const R = 6371.0; // Radius bumi dalam kilometer
+
+        const lat1Rad = toRad(lat1);
+        const lon1Rad = toRad(lon1);
+        const lat2Rad = toRad(lat2);
+        const lon2Rad = toRad(lon2);
+
+        const deltaLat = lat2Rad - lat1Rad;
+        const deltaLon = lon2Rad - lon1Rad;
+
+        // Menghitung jarak dengan rumus Haversine
+        const a = Math.sin(deltaLat / 2) ** 2 +
+                  Math.cos(lat1Rad) * Math.cos(lat2Rad) * Math.sin(deltaLon / 2) ** 2;
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        const distance = R * c;
+
+        // Menghitung initial bearing
+        const xInitial = Math.sin(deltaLon) * Math.cos(lat2Rad);
+        const yInitial = Math.cos(lat1Rad) * Math.sin(lat2Rad) -
+                         Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(deltaLon);
+        const initialBearing = (toDeg(Math.atan2(xInitial, yInitial)) + 360) % 360;
+
+        // Menghitung final bearing
+        const xFinal = Math.sin(-deltaLon) * Math.cos(lat1Rad);
+        const yFinal = Math.cos(lat2Rad) * Math.sin(lat1Rad) -
+                       Math.sin(lat2Rad) * Math.cos(lat1Rad) * Math.cos(-deltaLon);
+        const finalBearing = (toDeg(Math.atan2(xFinal, yFinal)) + 360) % 360;
+
+        return {
+            distance: parseFloat(distance.toFixed(2)),
+            initialBearing: parseFloat(initialBearing.toFixed(2)),
+            finalBearing: parseFloat(finalBearing.toFixed(2))
+        };
+    }
+
+    // Panggil fungsi untuk menghitung jarak dan bearing
+    const result = calculateDistanceAndBearings(lat1, lon1, lat2, lon2);
+
+    // Tampilkan hasil di panel
+    document.getElementById('results-panel').style.display = 'block';
+    document.getElementById('results-panel').innerHTML = `
+        <p><strong>Distance:</strong> ${result.distance} km</p>
+        <p><strong>Initial Bearing:</strong> ${result.initialBearing}°</p>
+        <p><strong>Final Bearing:</strong> ${result.finalBearing}°</p>
+    `;
+});
+
+// Toggle Results Panel
+document.getElementById('results-toggle').addEventListener('click', () => {
+    const resultsPanel = document.getElementById('results-panel');
+    resultsPanel.style.display = resultsPanel.style.display === 'none' ? 'block' : 'none';
+});
+
+// Export to CSV
+document.getElementById('export').addEventListener('click', () => {
+    const results = document.getElementById('results-panel').innerText;
+    if (!results) {
+        alert("No data to export.");
+        return;
+    }
+    const blob = new Blob([results], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'gis_results.csv';
+    a.click();
+
+    //fetch metadata
+});
+async function fetchMetadata(lat, lon) {
+    const geocodingURL = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`;
+    const elevationURL = `https://api.opentopodata.org/v1/eudem25m?locations=${lat},${lon}`;
+    
+    try {
+        console.log(`Fetching metadata for coordinates: Latitude=${lat}, Longitude=${lon}`);
+        
+        // API Geocoding Nominatim
+        const geocodingResponse = await fetch(geocodingURL);
+        const geocodingData = await geocodingResponse.json();
+        console.log("Geocoding Data:", geocodingData); // Log geocoding data
+
+        // API Elevation (misalnya Open Elevation)
+        const elevationResponse = await fetch(elevationURL);
+        const elevationData = await elevationResponse.json();
+        console.log("Elevation Data:", elevationData); // Log elevation data
+
+        // Gabungkan metadata
+        return `
+            <h3>Metadata</h3>
+            <ul>
+                <li><b>Latitude:</b> ${lat.toFixed(6)}</li>
+                <li><b>Longitude:</b> ${lon.toFixed(6)}</li>
+                <li><b>Display Name:</b> ${geocodingData.display_name || "Not Available"}</li>
+                <li><b>Altitude:</b> ${elevationData.results?.[0]?.elevation || "Not Available"} meters</li>
+            </ul>
+        `;
+    } catch (error) {
+        console.error("Error fetching metadata:", error);
+        return `
+            <h3>Metadata</h3>
+            <ul>
+                <li><b>Latitude:</b> ${lat.toFixed(6)}</li>
+                <li><b>Longitude:</b> ${lon.toFixed(6)}</li>
+                <li><b>Error:</b> Unable to fetch metadata.</li>
+            </ul>
+        `;
+    }
+}
+
+async function add3DEntities() {
+    const lat1 = parseFloat(document.getElementById('lat1').value);
+    const lon1 = parseFloat(document.getElementById('lon1').value);
+    const lat2 = parseFloat(document.getElementById('lat2').value);
+    const lon2 = parseFloat(document.getElementById('lon2').value);
+
+    if (isNaN(lat1) || isNaN(lon1) || isNaN(lat2) || isNaN(lon2)) {
+        alert("Please fill all valid coordinates!");
+        return;
+    }
+
+    // Fetch metadata for Point 1
+    const metadata1 = await fetchMetadata(lat1, lon1);
+
+    // Fetch metadata for Point 2
+    const metadata2 = await fetchMetadata(lat2, lon2);
+
+    // Add Point 1
+    viewer.entities.add({
+        name: "Point 1",
+        position: Cesium.Cartesian3.fromDegrees(lon1, lat1),
+        point: {
+            pixelSize: 10,
+            color: Cesium.Color.RED,
+        },
+        label: {
+            text: `Point 1 (${lat1.toFixed(2)}, ${lon1.toFixed(2)})`,
+            font: "14pt sans-serif",
+            fillColor: Cesium.Color.WHITE,
+            outlineColor: Cesium.Color.BLACK,
+            outlineWidth: 2,
+            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+        },
+        description: metadata1,
+    });
+
+    // Add Point 2
+    viewer.entities.add({
+        name: "Point 2",
+        position: Cesium.Cartesian3.fromDegrees(lon2, lat2),
+        point: {
+            pixelSize: 10,
+            color: Cesium.Color.BLUE,
+        },
+        label: {
+            text: `Point 2 (${lat2.toFixed(2)}, ${lon2.toFixed(2)})`,
+            font: "14pt sans-serif",
+            fillColor: Cesium.Color.WHITE,
+            outlineColor: Cesium.Color.BLACK,
+            outlineWidth: 2,
+            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+        },
+        description: metadata2,
+    });
+
+    // Add Curve
+    viewer.entities.add({
+        name: "Curve between Points",
+        polyline: {
+            positions: Cesium.Cartesian3.fromDegreesArray([lon1, lat1, lon2, lat2]),
+            width: 2,
+            material: Cesium.Color.YELLOW,
+        },
+    });
+
+    // Zoom to entities
+    viewer.zoomTo(viewer.entities);
+}
+// 3D Globe Switch
+const viewer = new Cesium.Viewer('cesiumContainer', {
+    terrainProvider: Cesium.createWorldTerrain(),
+});
+
+document.getElementById('switch-to-3d').addEventListener('click', () => {
+    const is3D = document.getElementById('cesiumContainer').style.display === 'block';
+    if (is3D) {
+        // Switch to 2D map
+        document.getElementById('cesiumContainer').style.display = 'none';
+        document.getElementById('map').style.display = 'block';
+    } else {
+        // Activate 3D globe
+        document.getElementById('map').style.display = 'none';
+        document.getElementById('cesiumContainer').style.display = 'block';
+
+        // Clear old entities and add new ones
+        viewer.entities.removeAll();
+        add3DEntities();
+    }
+});
+
+  // Clear Button
+document.getElementById('clear').addEventListener('click', () => {
+    // Clear 2D map markers, lines, and form inputs
+    if (point1) {
+        map.removeLayer(point1);
+        point1 = null;
+    }
+    if (point2) {
+        map.removeLayer(point2);
+        point2 = null;
+    }
+    if (line) {
+        map.removeLayer(line);
+        line = null;
+    }
+
+    // Reset form fields
+    document.getElementById('lat1').value = '';
+    document.getElementById('lon1').value = '';
+    document.getElementById('lat2').value = '';
+    document.getElementById('lon2').value = '';
+    document.getElementById('results-panel').innerHTML = '';
+    document.getElementById('search').value = '';
+
+    // Clear 3D globe entities
+    if (viewer) {
+        viewer.entities.removeAll();
+    }
+
+    // Log clear operation
+    console.log('All markers, lines, and form inputs cleared.');
+});
+
+    // save map as image
+    document.getElementById("saveMap").addEventListener("click", function () {
+    // Tunggu sampai semua elemen peta selesai dimuat
+    setTimeout(() => {
+        leafletImage(map, function (err, canvas) {
+            if (err) {
+                console.error("Kesalahan dalam proses leaflet-image:", err);
+                return;
+            }
+
+            try {
+                // Konversi canvas ke data URL
+                const imageData = canvas.toDataURL("image/png");
+
+                // Tampilkan hasil tangkapan layar di halaman
+                const screenshotContainer = document.getElementById("screenshotContainer");
+                screenshotContainer.innerHTML = ""; // Hapus gambar sebelumnya
+                const img = document.createElement("img");
+                img.src = imageData;
+                img.alt = "Hasil tangkapan layar peta";
+                img.style.width = "100%"; // Sesuaikan ukuran gambar
+                screenshotContainer.appendChild(img);
+
+                // Download gambar
+                const link = document.createElement("a");
+                link.download = "map_capture.png";
+                link.href = imageData;
+                link.click();
+            } catch (error) {
+                console.error("Terjadi kesalahan saat menyimpan gambar:", error);
+            }
+        });
+    }, 500); // Penundaan 500ms untuk memastikan peta sepenuhnya dimuat
+});
+
+// Fungsi untuk menangani tombol Save Map
+document.getElementById("saveMap").addEventListener("click", function () {
+        const mapElement = document.getElementById("map");
+        const screenshotResult = document.getElementById("screenshotResult");
+
+        // Ambil tangkapan layar peta (menggunakan leaflet atau canvas API)
+        html2canvas(mapElement).then(canvas => {
+            // Kosongkan kontainer hasil tangkapan layar
+            screenshotResult.innerHTML = "";
+            
+            // Tambahkan hasil screenshot ke dalam kontainer
+            screenshotResult.appendChild(canvas);
+        }).catch(error => {
+            console.error("Gagal mengambil tangkapan layar:", error);
+        });
+    });
+    </script>
+</body>
+</html>
